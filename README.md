@@ -1,3 +1,15 @@
+# NOTE: This branch (btsimonh-dev) is my development branch.
+It will contain additions and modifications over peter's origin, primarily 
+in support of use of node-opencv in Node-Red on RPi3; specifically Async 
+functionality to make use of the multiple cores, and developments around live
+video processing.
+
+See [My simple web pages](https://btsimonh.wordpress.com/node-opencv-with-node-red/) for further instructions.
+
+Pull requests will be issued for functionality considered generally useful for 
+node-opencv.  Happy to accept pull requests on this repo also.
+
+
 # node-opencv
 
 [![Build Status](https://secure.travis-ci.org/peterbraden/node-opencv.svg)](http://travis-ci.org/peterbraden/node-opencv)
