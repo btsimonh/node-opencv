@@ -3053,7 +3053,7 @@ NAN_METHOD(Matrix::GetrefCount) {
     }
 #else
     if (self->mat.refcount){
-        refcount = *self->mat.refcount);
+        refcount = *(self->mat.refcount);
     } else {
         refcount = -1;
     }
