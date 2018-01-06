@@ -39,6 +39,8 @@ public:
     __int64 readnumallocated();
     __int64 readnumdeallocated();
 
+    void AdjustJSMem(__int64 adjust);
+
     VARIABLES *variables;
     const cv::MatAllocator* stdAllocator;
 };
