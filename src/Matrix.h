@@ -21,8 +21,8 @@ public:
         stdAllocator = cv::Mat::getStdAllocator(); 
         variables = new VARIABLES;
         variables->TotalMem = 0; // total mem allocated by this allocator
-        variables->CountMemAllocs = -1;
-        variables->CountMemDeAllocs = -1;
+        variables->CountMemAllocs = 0;
+        variables->CountMemDeAllocs = 0;
         variables->TotalJSMem = 0; // total mem told to JS so far
     }
     ~CustomMatAllocator( ) { 
