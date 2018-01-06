@@ -16,7 +16,9 @@ cv::UMatData* CustomMatAllocator::allocate(int dims, const int* sizes, int type,
 {
     cv::UMatData* u = stdAllocator->allocate(dims, sizes, type, data0, step, flags, usageFlags);
     
+   
     if (NULL != u){
+        u->prevAllocator = u->currAllocator = this;
         if( !(u->flags & cv::UMatData::USER_ALLOCATED) ){
             // make mem change atomic
             variables->MemTotalChangeMutex.lock();
@@ -34,13 +36,6 @@ bool CustomMatAllocator::allocate(cv::UMatData* u, int accessFlags, cv::UMatUsag
     return stdAllocator->allocate(u, accessFlags, usageFlags);
 }
 
-void CustomMatAllocator::unmap(cv::UMatData* u) const
-{
-    if(u->urefcount == 0 && u->refcount == 0)
-    {
-        deallocate(u);
-    }
-}
 
 void CustomMatAllocator::deallocate(cv::UMatData* u) const
 {

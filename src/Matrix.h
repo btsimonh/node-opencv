@@ -32,7 +32,6 @@ public:
     cv::UMatData* allocate(int dims, const int* sizes, int type,
                        void* data0, size_t* step, int /*flags*/, cv::UMatUsageFlags /*usageFlags*/) const;
     bool allocate(cv::UMatData* u, int /*accessFlags*/, cv::UMatUsageFlags /*usageFlags*/) const;
-    void unmap(cv::UMatData* u) const;
     void deallocate(cv::UMatData* u) const;
 
     __int64 readtotalmem();
