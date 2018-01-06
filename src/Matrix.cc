@@ -10,9 +10,98 @@ cv::Scalar setColor(Local<Object> objColor);
 cv::Point setPoint(Local<Object> objPoint);
 cv::Rect* setRect(Local<Object> objRect, cv::Rect &result);
 
+
+cv::UMatData* CustomMatAllocator::allocate(int dims, const int* sizes, int type,
+                       void* data0, size_t* step, int flags, cv::UMatUsageFlags usageFlags) const
+{
+    cv::UMatData* u = stdAllocator->allocate(dims, sizes, type, data0, step, flags, usageFlags);
+    
+    if (NULL != u){
+        if( !(u->flags & cv::UMatData::USER_ALLOCATED) ){
+            // make mem change atomic
+            variables->MemTotalChangeMutex.lock();
+            variables->TotalMem += u->size;
+            variables->CountMemAllocs ++;
+            variables->MemTotalChangeMutex.unlock();
+        }
+    }
+    return u;
+}
+
+bool CustomMatAllocator::allocate(cv::UMatData* u, int accessFlags, cv::UMatUsageFlags usageFlags) const
+{
+    // this does not seem to change memory allocation?
+    return stdAllocator->allocate(u, accessFlags, usageFlags);
+}
+
+void CustomMatAllocator::unmap(cv::UMatData* u) const
+{
+    if(u->urefcount == 0 && u->refcount == 0)
+    {
+        deallocate(u);
+    }
+}
+
+void CustomMatAllocator::deallocate(cv::UMatData* u) const
+{
+    if (NULL != u){
+        if( !(u->flags & cv::UMatData::USER_ALLOCATED) ){
+            // make mem change atomic
+            variables->MemTotalChangeMutex.lock();
+            variables->TotalMem -= u->size;
+            variables->CountMemDeAllocs ++;
+            variables->MemTotalChangeMutex.unlock();
+        }
+    }
+    return stdAllocator->deallocate(u);
+}
+
+// method to read the total mem, but mutex protected.
+__int64 CustomMatAllocator::readtotalmem(){
+    __int64 Total;
+    variables->MemTotalChangeMutex.lock();
+    Total = variables->TotalMem;
+    variables->MemTotalChangeMutex.unlock();
+    return Total;
+}
+
+__int64 CustomMatAllocator::readmeminformed(){
+    __int64 Total;
+    variables->MemTotalChangeMutex.lock();
+    Total = variables->TotalJSMem;
+    variables->MemTotalChangeMutex.unlock();
+    return Total;
+}
+
+__int64 CustomMatAllocator::readnumallocated(){
+    __int64 Total;
+    variables->MemTotalChangeMutex.lock();
+    Total = variables->CountMemAllocs;
+    variables->MemTotalChangeMutex.unlock();
+    return Total;
+}
+
+__int64 CustomMatAllocator::readnumdeallocated(){
+    __int64 Total;
+    variables->MemTotalChangeMutex.lock();
+    Total = variables->CountMemDeAllocs;
+    variables->MemTotalChangeMutex.unlock();
+    return Total;
+}
+
+
+CustomMatAllocator *Matrix::custommatallocator = NULL;
+
+
 void Matrix::Init(Local<Object> target) {
   Nan::HandleScope scope;
 
+  if (NULL == custommatallocator){
+    custommatallocator = new CustomMatAllocator();
+    cv::Mat::setDefaultAllocator(custommatallocator);
+  }
+
+  
   //Class
   Local<FunctionTemplate> ctor = Nan::New<FunctionTemplate>(Matrix::New);
   constructor.Reset(ctor);
@@ -125,6 +214,11 @@ void Matrix::Init(Local<Object> target) {
   Nan::SetPrototypeMethod(ctor, "compare", Compare);
   Nan::SetPrototypeMethod(ctor, "mul", Mul);
 
+  Nan::SetPrototypeMethod(ctor, "getMemAllocated", GetMemAllocated);
+  Nan::SetPrototypeMethod(ctor, "getMemInformed", GetMemInformed);
+  Nan::SetPrototypeMethod(ctor, "getMemNumAllocated", GetMemNumAllocated);
+  Nan::SetPrototypeMethod(ctor, "getMemNumDeAllocated", GetMemNumDeAllocated);
+  
   target->Set(Nan::New("Matrix").ToLocalChecked(), ctor->GetFunction());
 };
 
@@ -160,6 +254,8 @@ NAN_METHOD(Matrix::New) {
   mat->Wrap(info.Holder());
   info.GetReturnValue().Set(info.Holder());
 }
+
+
 
 //Convenience factory method for creating a wrapped Matrix from a cv::Mat and tracking external memory correctly.
 // Always tracks the referenced matrix as external memory.
@@ -243,6 +339,8 @@ NAN_METHOD(Matrix::Empty) {
   info.GetReturnValue().Set(Nan::New<Boolean>(self->mat.empty()));
 }
 
+
+
 double Matrix::DblGet(cv::Mat mat, int i, int j) {
 
   double val = 0;
@@ -269,6 +367,38 @@ double Matrix::DblGet(cv::Mat mat, int i, int j) {
   }
 
   return val;
+}
+
+NAN_METHOD(Matrix::GetMemAllocated) {
+  SETUP_FUNCTION(Matrix)
+
+  __int64 val = Matrix::custommatallocator->readtotalmem();
+  double dval = (double)val;
+  info.GetReturnValue().Set(Nan::New<Number>(dval));
+}
+
+NAN_METHOD(Matrix::GetMemInformed) {
+  SETUP_FUNCTION(Matrix)
+
+  __int64 val = Matrix::custommatallocator->readmeminformed();
+  double dval = (double)val;
+  info.GetReturnValue().Set(Nan::New<Number>(dval));
+}
+
+NAN_METHOD(Matrix::GetMemNumAllocated) {
+  SETUP_FUNCTION(Matrix)
+
+  __int64 val = Matrix::custommatallocator->readnumallocated();
+  double dval = (double)val;
+  info.GetReturnValue().Set(Nan::New<Number>(dval));
+}
+
+NAN_METHOD(Matrix::GetMemNumDeAllocated) {
+  SETUP_FUNCTION(Matrix)
+
+  __int64 val = Matrix::custommatallocator->readnumdeallocated();
+  double dval = (double)val;
+  info.GetReturnValue().Set(Nan::New<Number>(dval));
 }
 
 NAN_METHOD(Matrix::Pixel) {

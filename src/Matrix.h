@@ -2,6 +2,49 @@
 #include "OpenCV.h"
 #include "../inc/Matrix.h"
 
+class CustomMatAllocator : public cv::MatAllocator{
+public:
+    // strange evilness of the functions being tagged const means that the fns cant change
+    // stuff in the class instance.
+    // so instead create constant pointer to a structure which we are allowed to change, even 
+    // from a const function.
+    typedef struct tag_Variables {
+        cv::Mutex MemTotalChangeMutex;
+        __int64 TotalMem; // total mem allocated by this allocator
+        __int64 CountMemAllocs;
+        __int64 CountMemDeAllocs;
+
+        __int64 TotalJSMem; // total mem told to JS so far
+    } VARIABLES;
+
+    CustomMatAllocator( ) { 
+        stdAllocator = cv::Mat::getStdAllocator(); 
+        variables = new VARIABLES;
+        variables->TotalMem = 0; // total mem allocated by this allocator
+        variables->CountMemAllocs = -1;
+        variables->CountMemDeAllocs = -1;
+        variables->TotalJSMem = 0; // total mem told to JS so far
+    }
+    ~CustomMatAllocator( ) { 
+        delete variables;
+    }
+
+    cv::UMatData* allocate(int dims, const int* sizes, int type,
+                       void* data0, size_t* step, int /*flags*/, cv::UMatUsageFlags /*usageFlags*/) const;
+    bool allocate(cv::UMatData* u, int /*accessFlags*/, cv::UMatUsageFlags /*usageFlags*/) const;
+    void unmap(cv::UMatData* u) const;
+    void deallocate(cv::UMatData* u) const;
+
+    __int64 readtotalmem();
+    __int64 readmeminformed();
+    __int64 readnumallocated();
+    __int64 readnumdeallocated();
+
+    VARIABLES *variables;
+    const cv::MatAllocator* stdAllocator;
+};
+
+
 class Matrix: public node_opencv::Matrix{
 public:
   static Nan::Persistent<FunctionTemplate> constructor;
@@ -17,6 +60,7 @@ public:
   Matrix(int rows, int cols, int type);
   Matrix(int rows, int cols, int type, Local<Object> scalarObj);
   ~Matrix();
+  static CustomMatAllocator *custommatallocator;
 
   static double DblGet(cv::Mat mat, int i, int j);
 
@@ -148,6 +192,13 @@ public:
   JSFUNC(Subtract)
   JSFUNC(Compare)
   JSFUNC(Mul)
+          
+          
+  JSFUNC(GetMemAllocated);
+  JSFUNC(GetMemInformed);
+  JSFUNC(GetMemNumAllocated);
+  JSFUNC(GetMemNumDeAllocated);
+          
   /*
    static Handle<Value> Val(const Arguments& info);
    static Handle<Value> RowRange(const Arguments& info);
