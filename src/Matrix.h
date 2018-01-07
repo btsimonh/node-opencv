@@ -2,7 +2,11 @@
 #include "OpenCV.h"
 #include "../inc/Matrix.h"
 
-class CustomMatAllocator : public cv::MatAllocator{
+class CustomMatAllocator 
+#if CV_MAJOR_VERSION >= 3
+: public cv::MatAllocator
+#endif
+{
 public:
     // strange evilness of the functions being tagged const means that the fns cant change
     // stuff in the class instance.
@@ -18,7 +22,9 @@ public:
     } VARIABLES;
 
     CustomMatAllocator( ) { 
+#if CV_MAJOR_VERSION >= 3
         stdAllocator = cv::Mat::getStdAllocator(); 
+#endif
         variables = new VARIABLES;
         variables->TotalMem = 0; // total mem allocated by this allocator
         variables->CountMemAllocs = 0;
@@ -29,20 +35,32 @@ public:
         delete variables;
     }
 
+#if CV_MAJOR_VERSION >= 3
     cv::UMatData* allocate(int dims, const int* sizes, int type,
                        void* data0, size_t* step, int /*flags*/, cv::UMatUsageFlags /*usageFlags*/) const;
     bool allocate(cv::UMatData* u, int /*accessFlags*/, cv::UMatUsageFlags /*usageFlags*/) const;
     void deallocate(cv::UMatData* u) const;
-
+#endif
     __int64 readtotalmem();
     __int64 readmeminformed();
     __int64 readnumallocated();
     __int64 readnumdeallocated();
 
-    void AdjustJSMem(__int64 adjust);
+#if CV_MAJOR_VERSION < 3
+    // function to externally adjust the count of allocated Mem
+    void AdjustTotalMem(__int64 adjust);
+#endif
+
+    // function which adjusts NAN mem to match allocated mem.
+    // ONLY call from main JS loop.
+    void FixupJSMem();
+    
 
     VARIABLES *variables;
+    
+#if CV_MAJOR_VERSION >= 3
     const cv::MatAllocator* stdAllocator;
+#endif
 };
 
 
@@ -62,6 +80,8 @@ public:
   Matrix(int rows, int cols, int type, Local<Object> scalarObj);
   ~Matrix();
   static CustomMatAllocator *custommatallocator;
+  
+  static void AdjustExternalMemory(__int64 diff, bool commit = true);
 
   static double DblGet(cv::Mat mat, int i, int j);
 
@@ -193,12 +213,6 @@ public:
   JSFUNC(Subtract)
   JSFUNC(Compare)
   JSFUNC(Mul)
-          
-          
-  JSFUNC(GetMemAllocated);
-  JSFUNC(GetMemInformed);
-  JSFUNC(GetMemNumAllocated);
-  JSFUNC(GetMemNumDeAllocated);
           
   /*
    static Handle<Value> Val(const Arguments& info);

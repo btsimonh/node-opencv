@@ -11,6 +11,7 @@ cv::Point setPoint(Local<Object> objPoint);
 cv::Rect* setRect(Local<Object> objRect, cv::Rect &result);
 
 
+#if CV_MAJOR_VERSION >= 3
 cv::UMatData* CustomMatAllocator::allocate(int dims, const int* sizes, int type,
                        void* data0, size_t* step, int flags, cv::UMatUsageFlags usageFlags) const
 {
@@ -50,6 +51,7 @@ void CustomMatAllocator::deallocate(cv::UMatData* u) const
     }
     return stdAllocator->deallocate(u);
 }
+#endif
 
 // method to read the total mem, but mutex protected.
 __int64 CustomMatAllocator::readtotalmem(){
@@ -84,12 +86,41 @@ __int64 CustomMatAllocator::readnumdeallocated(){
     return Total;
 }
 
-void CustomMatAllocator::AdjustJSMem(__int64 adjust){
+#if CV_MAJOR_VERSION < 3
+void CustomMatAllocator::AdjustTotalMem(__int64 adjust){
+    variables->MemTotalChangeMutex.lock();
+    variables->TotalMem += adjust;
+    variables->MemTotalChangeMutex.unlock();
+}
+#endif
+
+void CustomMatAllocator::FixupJSMem(){
+    variables->MemTotalChangeMutex.lock();
+    __int64 adjust = variables->TotalMem - variables->TotalJSMem;
     variables->TotalJSMem += adjust;
+    variables->MemTotalChangeMutex.unlock();
+    
+    Nan::AdjustExternalMemory(adjust);
 }
 
 
 CustomMatAllocator *Matrix::custommatallocator = NULL;
+
+
+// call if memory has changed.  diff is an estimate of size, only used for opencv 2.4
+// commit (default true) should be set to false if called from a thread other than the main JS loop
+void Matrix::AdjustExternalMemory(__int64 diff, bool commit){
+    if (NULL != Matrix::custommatallocator){
+#if CV_MAJOR_VERSION < 3
+        // if we're not using the custom allocator for allocation,
+        // inform it of our estimate of memory change.
+        Matrix::custommatallocator->AdjustTotalMem(diff);
+#endif
+        if (commit){
+            Matrix::custommatallocator->FixupJSMem();
+        }
+    }
+}
 
 
 void Matrix::Init(Local<Object> target) {
@@ -97,7 +128,9 @@ void Matrix::Init(Local<Object> target) {
 
   if (NULL == custommatallocator){
     custommatallocator = new CustomMatAllocator();
+#if CV_MAJOR_VERSION >= 3
     cv::Mat::setDefaultAllocator(custommatallocator);
+#endif
   }
 
   
@@ -213,11 +246,6 @@ void Matrix::Init(Local<Object> target) {
   Nan::SetPrototypeMethod(ctor, "compare", Compare);
   Nan::SetPrototypeMethod(ctor, "mul", Mul);
 
-  Nan::SetPrototypeMethod(ctor, "getMemAllocated", GetMemAllocated);
-  Nan::SetPrototypeMethod(ctor, "getMemInformed", GetMemInformed);
-  Nan::SetPrototypeMethod(ctor, "getMemNumAllocated", GetMemNumAllocated);
-  Nan::SetPrototypeMethod(ctor, "getMemNumDeAllocated", GetMemNumDeAllocated);
-  
   target->Set(Nan::New("Matrix").ToLocalChecked(), ctor->GetFunction());
 };
 
@@ -263,9 +291,7 @@ Local<Object> Matrix::CreateWrappedFromMat(cv::Mat mat){
       Nan::NewInstance(Nan::GetFunction(Nan::New(Matrix::constructor)).ToLocalChecked()).ToLocalChecked();
   Matrix *m = Nan::ObjectWrap::Unwrap<Matrix>(result);
   m->mat = mat;
-  Nan::AdjustExternalMemory(m->mat.dataend - m->mat.datastart);
-  if (Matrix::custommatallocator)
-    Matrix::custommatallocator->AdjustJSMem(m->mat.dataend - m->mat.datastart);
+  AdjustExternalMemory(m->mat.dataend - m->mat.datastart);
 
   return result;
 }
@@ -279,9 +305,7 @@ Local<Object> Matrix::CreateWrappedFromMatIfNotReferenced(cv::Mat mat, int baseR
   Matrix *m = Nan::ObjectWrap::Unwrap<Matrix>(result);
   m->mat = mat;
   if (m->getWrappedRefCount() <= 2 + baseRefCount){ //one reference in m, one on the stack
-    Nan::AdjustExternalMemory(m->mat.dataend - m->mat.datastart);
-    if (Matrix::custommatallocator)
-        Matrix::custommatallocator->AdjustJSMem(m->mat.dataend - m->mat.datastart);
+    AdjustExternalMemory(m->mat.dataend - m->mat.datastart);
   }
   return result;
 }
@@ -294,17 +318,13 @@ Matrix::Matrix() :
 Matrix::Matrix(int rows, int cols) :
     node_opencv::Matrix() {
   mat = cv::Mat(rows, cols, CV_32FC3);
-  Nan::AdjustExternalMemory(mat.dataend - mat.datastart);
-  if (Matrix::custommatallocator)
-    Matrix::custommatallocator->AdjustJSMem(mat.dataend - mat.datastart);
+  AdjustExternalMemory(mat.dataend - mat.datastart);
 }
 
 Matrix::Matrix(int rows, int cols, int type) :
     node_opencv::Matrix() {
   mat = cv::Mat(rows, cols, type);
-  Nan::AdjustExternalMemory(mat.dataend - mat.datastart);
-  if (Matrix::custommatallocator)
-    Matrix::custommatallocator->AdjustJSMem(mat.dataend - mat.datastart);
+  AdjustExternalMemory(mat.dataend - mat.datastart);
 }
 
 Matrix::Matrix(Matrix *m) :
@@ -319,9 +339,7 @@ Matrix::Matrix(cv::Mat m, cv::Rect roi) :
 
 Matrix::Matrix(int rows, int cols, int type, Local<Object> scalarObj) {
   mat = cv::Mat(rows, cols, type);
-  Nan::AdjustExternalMemory(mat.dataend - mat.datastart);
-  if (Matrix::custommatallocator)
-    Matrix::custommatallocator->AdjustJSMem(mat.dataend - mat.datastart);
+  AdjustExternalMemory(mat.dataend - mat.datastart);
   if (mat.channels() == 3) {
     mat.setTo(cv::Scalar(scalarObj->Get(0)->IntegerValue(),
         scalarObj->Get(1)->IntegerValue(),
@@ -339,9 +357,7 @@ Matrix::Matrix(int rows, int cols, int type, Local<Object> scalarObj) {
 Matrix::~Matrix(){
   if(getWrappedRefCount() == 1){ //if this holds the last reference to the Mat
     int size = mat.dataend - mat.datastart;
-    Nan::AdjustExternalMemory(-1 * size);
-    if (Matrix::custommatallocator)
-        Matrix::custommatallocator->AdjustJSMem(-1 * size);
+    AdjustExternalMemory(-1 * size);
   }
 }
 
@@ -380,37 +396,6 @@ double Matrix::DblGet(cv::Mat mat, int i, int j) {
   return val;
 }
 
-NAN_METHOD(Matrix::GetMemAllocated) {
-  SETUP_FUNCTION(Matrix)
-
-  __int64 val = Matrix::custommatallocator->readtotalmem();
-  double dval = (double)val;
-  info.GetReturnValue().Set(Nan::New<Number>(dval));
-}
-
-NAN_METHOD(Matrix::GetMemInformed) {
-  SETUP_FUNCTION(Matrix)
-
-  __int64 val = Matrix::custommatallocator->readmeminformed();
-  double dval = (double)val;
-  info.GetReturnValue().Set(Nan::New<Number>(dval));
-}
-
-NAN_METHOD(Matrix::GetMemNumAllocated) {
-  SETUP_FUNCTION(Matrix)
-
-  __int64 val = Matrix::custommatallocator->readnumallocated();
-  double dval = (double)val;
-  info.GetReturnValue().Set(Nan::New<Number>(dval));
-}
-
-NAN_METHOD(Matrix::GetMemNumDeAllocated) {
-  SETUP_FUNCTION(Matrix)
-
-  __int64 val = Matrix::custommatallocator->readnumdeallocated();
-  double dval = (double)val;
-  info.GetReturnValue().Set(Nan::New<Number>(dval));
-}
 
 NAN_METHOD(Matrix::Pixel) {
   SETUP_FUNCTION(Matrix)
@@ -1338,9 +1323,7 @@ NAN_METHOD(Matrix::ConvertGrayscale) {
   int oldSize = self->mat.dataend - self->mat.datastart;
   cv::cvtColor(self->mat, self->mat, CV_BGR2GRAY);
   int newSize = self->mat.dataend - self->mat.datastart;
-  Nan::AdjustExternalMemory(newSize - oldSize);
-  if (Matrix::custommatallocator)
-    Matrix::custommatallocator->AdjustJSMem(newSize - oldSize);
+  AdjustExternalMemory(newSize - oldSize);
 
   info.GetReturnValue().Set(Nan::Null());
 }
@@ -1471,9 +1454,7 @@ NAN_METHOD(Matrix::Sobel) {
   Matrix *result = Nan::ObjectWrap::Unwrap<Matrix>(result_to_return);
 
   cv::Sobel(self->mat, result->mat, ddepth, xorder, yorder, ksize, scale, delta, borderType);
-  Nan::AdjustExternalMemory(result->mat.dataend - result->mat.datastart);
-  if (Matrix::custommatallocator)
-    Matrix::custommatallocator->AdjustJSMem(result->mat.dataend - result->mat.datastart);
+  AdjustExternalMemory(result->mat.dataend - result->mat.datastart);
 
   info.GetReturnValue().Set(result_to_return);
 }
@@ -1487,9 +1468,7 @@ NAN_METHOD(Matrix::Copy) {
       Nan::NewInstance(Nan::GetFunction(Nan::New(Matrix::constructor)).ToLocalChecked()).ToLocalChecked();
   Matrix *img = Nan::ObjectWrap::Unwrap<Matrix>(img_to_return);
   self->mat.copyTo(img->mat);
-  Nan::AdjustExternalMemory(img->mat.dataend - img->mat.datastart);
-  if (Matrix::custommatallocator)
-    Matrix::custommatallocator->AdjustJSMem(img->mat.dataend - img->mat.datastart);
+  AdjustExternalMemory(img->mat.dataend - img->mat.datastart);
 
   info.GetReturnValue().Set(img_to_return);
 }
@@ -1509,9 +1488,7 @@ NAN_METHOD(Matrix::Flip) {
   Local<Object> img_to_return = Nan::NewInstance(Nan::GetFunction(Nan::New(Matrix::constructor)).ToLocalChecked()).ToLocalChecked();
   Matrix *img = Nan::ObjectWrap::Unwrap<Matrix>(img_to_return);
   cv::flip(self->mat, img->mat, flipCode);
-  Nan::AdjustExternalMemory(img->mat.dataend - img->mat.datastart);
-  if (Matrix::custommatallocator)
-    Matrix::custommatallocator->AdjustJSMem(img->mat.dataend - img->mat.datastart);
+  AdjustExternalMemory(img->mat.dataend - img->mat.datastart);
 
   info.GetReturnValue().Set(img_to_return);
 }
@@ -1574,9 +1551,7 @@ NAN_METHOD(Matrix::Dct) {
   Local<Object> out = Nan::NewInstance(Nan::GetFunction(Nan::New(Matrix::constructor)).ToLocalChecked()).ToLocalChecked();
   Matrix *m_out = Nan::ObjectWrap::Unwrap<Matrix>(out);
   m_out->mat.create(cols, rows, CV_32F);
-  Nan::AdjustExternalMemory(m_out->mat.dataend - m_out->mat.datastart);
-  if (Matrix::custommatallocator)
-    Matrix::custommatallocator->AdjustJSMem(m_out->mat.dataend - m_out->mat.datastart);
+  AdjustExternalMemory(m_out->mat.dataend - m_out->mat.datastart);
 
   cv::dct(self->mat, m_out->mat);
 
@@ -1593,9 +1568,7 @@ NAN_METHOD(Matrix::Idct) {
   Local<Object> out = Nan::NewInstance(Nan::GetFunction(Nan::New(Matrix::constructor)).ToLocalChecked()).ToLocalChecked();
   Matrix *m_out = Nan::ObjectWrap::Unwrap<Matrix>(out);
   m_out->mat.create(cols, rows, CV_32F);
-  Nan::AdjustExternalMemory(m_out->mat.dataend - m_out->mat.datastart);
-  if (Matrix::custommatallocator)
-    Matrix::custommatallocator->AdjustJSMem(m_out->mat.dataend - m_out->mat.datastart);
+  AdjustExternalMemory(m_out->mat.dataend - m_out->mat.datastart);
 
   cv::idct(self->mat, m_out->mat);
 
@@ -2244,9 +2217,7 @@ NAN_METHOD(Matrix::Resize) {
         ~self->mat;
         self->mat = res;
         int newSize = self->mat.dataend - self->mat.datastart;
-        Nan::AdjustExternalMemory(newSize - oldSize);
-        if (Matrix::custommatallocator)
-            Matrix::custommatallocator->AdjustJSMem(newSize - oldSize);
+        AdjustExternalMemory(newSize - oldSize);
         
     } catch (...){
         return Nan::ThrowError("c++ Exception processing resize");
@@ -2651,9 +2622,7 @@ NAN_METHOD(Matrix::CvtColor) {
   cv::cvtColor(self->mat, self->mat, iTransform);
   int newSize = self->mat.dataend - self->mat.datastart;
   if(oldSize != newSize){
-    Nan::AdjustExternalMemory(newSize - oldSize);
-    if (Matrix::custommatallocator)
-        Matrix::custommatallocator->AdjustJSMem(newSize - oldSize);
+    AdjustExternalMemory(newSize - oldSize);
   }
 
   return;
@@ -2705,9 +2674,7 @@ NAN_METHOD(Matrix::Merge) {
   }
   cv::merge(vChannels, self->mat);
   int newSize = self->mat.dataend - self->mat.datastart;
-  Nan::AdjustExternalMemory(newSize - oldSize);
-  if (Matrix::custommatallocator)
-        Matrix::custommatallocator->AdjustJSMem(newSize - oldSize);
+  AdjustExternalMemory(newSize - oldSize);
 
   return;
 }
@@ -2866,9 +2833,7 @@ NAN_METHOD(Matrix::MatchTemplateByMatrix) {
   int cols = self->mat.cols - templ->mat.cols + 1;
   int rows = self->mat.rows - templ->mat.rows + 1;
   m_out->mat.create(cols, rows, CV_32FC1);
-  Nan::AdjustExternalMemory(m_out->mat.dataend - m_out->mat.datastart);
-  if (Matrix::custommatallocator)
-        Matrix::custommatallocator->AdjustJSMem(m_out->mat.dataend - m_out->mat.datastart);
+  AdjustExternalMemory(m_out->mat.dataend - m_out->mat.datastart);
 
   /*
    TM_SQDIFF        =0
@@ -2903,9 +2868,7 @@ NAN_METHOD(Matrix::MatchTemplate) {
   int cols = self->mat.cols - templ.cols + 1;
   int rows = self->mat.rows - templ.rows + 1;
   m_out->mat.create(cols, rows, CV_32FC1);
-  Nan::AdjustExternalMemory(m_out->mat.dataend - m_out->mat.datastart);
-  if (Matrix::custommatallocator)
-        Matrix::custommatallocator->AdjustJSMem(m_out->mat.dataend - m_out->mat.datastart);
+  AdjustExternalMemory(m_out->mat.dataend - m_out->mat.datastart);
 
   /*
    TM_SQDIFF        =0
@@ -3226,9 +3189,7 @@ NAN_METHOD(Matrix::Release) {
 
   if(self->getWrappedRefCount() == 1){
     int size = self->mat.dataend - self->mat.datastart;
-    Nan::AdjustExternalMemory(-1 * size);
-    if (Matrix::custommatallocator)
-        Matrix::custommatallocator->AdjustJSMem(-1 * size);
+    AdjustExternalMemory(-1 * size);
   }
 
   self->mat.release();
