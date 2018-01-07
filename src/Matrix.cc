@@ -359,6 +359,7 @@ Matrix::Matrix(int rows, int cols, int type, Local<Object> scalarObj) {
 Matrix::~Matrix(){
   if(getWrappedRefCount() == 1){ //if this holds the last reference to the Mat
     int size = mat.dataend - mat.datastart;
+    mat.release();
     AdjustExternalMemory(-1 * size);
   }
 }
