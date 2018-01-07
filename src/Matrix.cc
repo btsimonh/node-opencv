@@ -4,6 +4,8 @@
 #include <string.h>
 #include <nan.h>
 
+
+
 Nan::Persistent<FunctionTemplate> Matrix::constructor;
 
 cv::Scalar setColor(Local<Object> objColor);
@@ -11,7 +13,7 @@ cv::Point setPoint(Local<Object> objPoint);
 cv::Rect* setRect(Local<Object> objRect, cv::Rect &result);
 
 
-#if CV_MAJOR_VERSION >= 3
+#ifdef USE_CUSTOM_ALLOCATOR
 cv::UMatData* CustomMatAllocator::allocate(int dims, const int* sizes, int type,
                        void* data0, size_t* step, int flags, cv::UMatUsageFlags usageFlags) const
 {
@@ -86,7 +88,7 @@ __int64 CustomMatAllocator::readnumdeallocated(){
     return Total;
 }
 
-#if CV_MAJOR_VERSION < 3
+#ifndef USE_CUSTOM_ALLOCATOR
 void CustomMatAllocator::AdjustTotalMem(__int64 adjust){
     variables->MemTotalChangeMutex.lock();
     variables->TotalMem += adjust;
@@ -111,7 +113,7 @@ CustomMatAllocator *Matrix::custommatallocator = NULL;
 // commit (default true) should be set to false if called from a thread other than the main JS loop
 void Matrix::AdjustExternalMemory(__int64 diff, bool commit){
     if (NULL != Matrix::custommatallocator){
-#if CV_MAJOR_VERSION < 3
+#ifndef USE_CUSTOM_ALLOCATOR
         // if we're not using the custom allocator for allocation,
         // inform it of our estimate of memory change.
         Matrix::custommatallocator->AdjustTotalMem(diff);
@@ -128,7 +130,7 @@ void Matrix::Init(Local<Object> target) {
 
   if (NULL == custommatallocator){
     custommatallocator = new CustomMatAllocator();
-#if CV_MAJOR_VERSION >= 3
+#ifdef USE_CUSTOM_ALLOCATOR
     cv::Mat::setDefaultAllocator(custommatallocator);
 #endif
   }
@@ -3210,7 +3212,7 @@ NAN_METHOD(Matrix::Release) {
 
 int Matrix::getWrappedRefCount(){
     int refcount = -1;
-#if CV_MAJOR_VERSION >= 3
+#if (CV_MAJOR_VERSION >= 3)
     if (mat.u){
         refcount = mat.u->refcount;
     } else {

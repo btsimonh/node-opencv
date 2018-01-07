@@ -2,8 +2,13 @@
 #include "OpenCV.h"
 #include "../inc/Matrix.h"
 
+#if (CV_MAJOR_VERSION > 3) || ((CV_MAJOR_VERSION == 3) && (CV_MINOR_VERSION > 0))
+#define USE_CUSTOM_ALLOCATOR 1
+#endif
+
+
 class CustomMatAllocator 
-#if CV_MAJOR_VERSION >= 3
+#ifdef USE_CUSTOM_ALLOCATOR
 : public cv::MatAllocator
 #endif
 {
@@ -22,7 +27,7 @@ public:
     } VARIABLES;
 
     CustomMatAllocator( ) { 
-#if CV_MAJOR_VERSION >= 3
+#ifdef USE_CUSTOM_ALLOCATOR
         stdAllocator = cv::Mat::getStdAllocator(); 
 #endif
         variables = new VARIABLES;
@@ -35,7 +40,7 @@ public:
         delete variables;
     }
 
-#if CV_MAJOR_VERSION >= 3
+#ifdef USE_CUSTOM_ALLOCATOR
     cv::UMatData* allocate(int dims, const int* sizes, int type,
                        void* data0, size_t* step, int /*flags*/, cv::UMatUsageFlags /*usageFlags*/) const;
     bool allocate(cv::UMatData* u, int /*accessFlags*/, cv::UMatUsageFlags /*usageFlags*/) const;
@@ -46,7 +51,7 @@ public:
     __int64 readnumallocated();
     __int64 readnumdeallocated();
 
-#if CV_MAJOR_VERSION < 3
+#ifndef USE_CUSTOM_ALLOCATOR
     // function to externally adjust the count of allocated Mem
     void AdjustTotalMem(__int64 adjust);
 #endif
@@ -58,7 +63,7 @@ public:
 
     VARIABLES *variables;
     
-#if CV_MAJOR_VERSION >= 3
+#ifdef USE_CUSTOM_ALLOCATOR
     const cv::MatAllocator* stdAllocator;
 #endif
 };
