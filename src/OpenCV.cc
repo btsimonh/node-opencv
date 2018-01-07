@@ -13,8 +13,35 @@ void OpenCV::Init(Local<Object> target) {
   Nan::SetMethod(target, "readImage", ReadImage);
   Nan::SetMethod(target, "readImageAsync", ReadImageAsync);
   Nan::SetMethod(target, "readImageMulti", ReadImageMulti);
+
+  Nan::SetMethod(target, "getMemMetrics", GetMemMetrics);
 }
 
+
+NAN_METHOD(OpenCV::GetMemMetrics) {
+  Nan::HandleScope scope;
+    
+  __int64 TotalAlloc = -1;
+  __int64 TotalKnownByJS = -1;
+  __int64 NumAllocations = -1;
+  __int64 NumDeAllocations = -1;
+
+  if (Matrix::custommatallocator != NULL){
+    TotalAlloc = Matrix::custommatallocator->readtotalmem();
+    TotalKnownByJS = Matrix::custommatallocator->readmeminformed();
+    NumAllocations = Matrix::custommatallocator->readnumallocated();
+    NumDeAllocations = Matrix::custommatallocator->readnumdeallocated();
+  }
+
+  Local<Object> result = Nan::New<Object>();
+  result->Set(Nan::New<String>("TotalAlloc").ToLocalChecked(), Nan::New<Number>(TotalAlloc));
+  result->Set(Nan::New<String>("TotalKnownByJS").ToLocalChecked(), Nan::New<Number>(TotalKnownByJS));
+  result->Set(Nan::New<String>("NumAllocations").ToLocalChecked(), Nan::New<Number>(NumAllocations));
+  result->Set(Nan::New<String>("NumDeAllocations").ToLocalChecked(), Nan::New<Number>(NumDeAllocations));
+
+  info.GetReturnValue().Set(result);
+  return;
+}
 
 // worker which decodes an image from data.
 class AsyncImDecodeWorker: public Nan::AsyncWorker {
